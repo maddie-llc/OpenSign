@@ -23,35 +23,37 @@ export default async function getDocument(request) {
         }
         const res = await query.first({ useMasterKey: true });
         if (res) {
-          const IsEnableOTP = res?.get('IsEnableOTP') || false;
           const document = JSON.parse(JSON.stringify(res));
           delete document.ExtUserPtr.TenantId.FileAdapters;
           delete document?.ExtUserPtr?.TenantId?.PfxFile;
-          if (!IsEnableOTP) {
+          // LoKation hardening: enforce an ACL/session check UNCONDITIONALLY,
+          // not only when IsEnableOTP is true. Trusted server-to-server callers
+          // (Sphere) use the master key and are allowed through; every other
+          // caller must present a session token with ACL read access.
+          if (request.master === true) {
             return document;
-          } else {
-            if (sessiontoken) {
-              try {
-                const userRes = await axios.get(serverUrl + '/users/me', {
-                  headers: {
-                    'X-Parse-Application-Id': serverAppId,
-                    'X-Parse-Session-Token': sessiontoken,
-                  },
-                });
-                const userId = userRes.data && userRes.data?.objectId;
-                const acl = res.getACL();
-                if (userId && acl && acl.getReadAccess(userId)) {
-                  return document;
-                } else {
-                  return { error: "You don't have access of this document!" };
-                }
-              } catch (err) {
-                console.log('err user in not authenticated', err);
+          }
+          if (sessiontoken) {
+            try {
+              const userRes = await axios.get(serverUrl + '/users/me', {
+                headers: {
+                  'X-Parse-Application-Id': serverAppId,
+                  'X-Parse-Session-Token': sessiontoken,
+                },
+              });
+              const userId = userRes.data && userRes.data?.objectId;
+              const acl = res.getACL();
+              if (userId && acl && acl.getReadAccess(userId)) {
+                return document;
+              } else {
                 return { error: "You don't have access of this document!" };
               }
-            } else {
+            } catch (err) {
+              console.log('err user in not authenticated', err);
               return { error: "You don't have access of this document!" };
             }
+          } else {
+            return { error: "You don't have access of this document!" };
           }
         } else {
           return { error: "document deleted or you don't have access." };

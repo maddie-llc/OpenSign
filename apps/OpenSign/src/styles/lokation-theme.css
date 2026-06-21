@@ -1,0 +1,57 @@
+/*
+ * LoKation Sphere branding overlay for OpenSign.
+ *
+ * Additive, low-merge-conflict theming: this file recolors the EXISTING daisyUI
+ * theme names (opensigncss light / opensigndark dark) by overriding the
+ * generated CSS custom properties, plus loads the LoKation brand font. It is
+ * imported once from the client entry point so OpenSign component source is not
+ * edited and upstream updates merge cleanly.
+ *
+ * Canonical LoKation palette (from sphere-webui brand-resources):
+ *   primary blue   #002A4E  (PANTONE 540C)
+ *   secondary blue #083E63
+ *   grays          #222222 #4D4D4D #8F8F8F #D0D0D0
+ *   font           Axis Extrabold
+ */
+
+@font-face {
+  font-family: 'Axis';
+  src: url('/fonts/Axis_Extrabold.otf') format('opentype');
+  font-weight: 800;
+  font-display: swap;
+}
+
+/* daisyUI exposes theme colors as HSL component custom properties (--p, --pc,
+   --s, --sc, --a, ...). Override them per theme so all primary/secondary
+   surfaces adopt LoKation colors without touching component classes. */
+
+/* Light theme: opensigncss */
+[data-theme='opensigncss'] {
+  /* primary = #002A4E */
+  --p: 206 100% 15%;
+  --pc: 0 0% 100%;
+  /* secondary = #083E63 */
+  --s: 205 85% 21%;
+  --sc: 0 0% 100%;
+  /* accent = secondary blue for cohesive CTAs */
+  --a: 205 85% 21%;
+  --ac: 0 0% 100%;
+}
+
+/* Dark theme: opensigndark */
+[data-theme='opensigndark'] {
+  /* primary = #083E63 (lighter blue reads better on dark) */
+  --p: 205 85% 21%;
+  --pc: 0 0% 100%;
+  /* secondary = #002A4E */
+  --s: 206 100% 15%;
+  --sc: 0 0% 100%;
+  --a: 205 85% 35%;
+  --ac: 0 0% 100%;
+}
+
+/* Apply the brand font to headings/brand surfaces without overriding body text. */
+[data-theme='opensigncss'] .lokation-brand,
+[data-theme='opensigndark'] .lokation-brand {
+  font-family: 'Axis', system-ui, sans-serif;
+}

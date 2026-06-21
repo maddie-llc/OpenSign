@@ -54,6 +54,29 @@ every upstream update:
   hardening (enforces the ACL/session check unconditionally; master-key
   server-to-server calls allowed). OpenSign loads this as a Parse cloud function
   from its own path.
-- Branding hooks (when added): a 1–2 line theme import in the OpenSign client
-  plus asset replacements; the bulk of branding stays additive under
-  `lokation/src/assets/`.
+- Branding: one theme-import line in `apps/OpenSign/src/index.jsx` plus logo
+  binary swaps, all applied by `lokation/src/scripts/apply-branding.sh` from the
+  source of truth under `lokation/src/`.
+
+## Branding overlay (`src/assets/brand/`, `src/styles/`, `src/scripts/`)
+
+LoKation Sphere look-and-feel is applied as a low-merge-conflict overlay sourced
+from the official LoKation brand kit (extracted from `sphere-webui`):
+
+- Palette: primary `#002A4E` (PANTONE 540C), secondary `#083E63`, grays
+  `#222222`/`#4D4D4D`/`#8F8F8F`/`#D0D0D0`; brand font Axis Extrabold.
+- `src/styles/lokation-theme.css` recolors the existing daisyUI theme names
+  (`opensigncss` light / `opensigndark` dark) by overriding their CSS custom
+  properties — no OpenSign component edits.
+- `src/assets/brand/` holds the canonical logos, icon, and font (source of truth).
+- `src/scripts/apply-branding.sh` copies the theme + assets into the OpenSign
+  client and adds the single import line. Re-run after each OpenSign upgrade:
+
+```bash
+lokation/src/scripts/apply-branding.sh
+```
+
+Assets bundle same-origin (font under the client `public/fonts/`), so there is no
+new runtime failure boundary. The "OpenSign" name/attribution is intentionally
+retained (AGPL-friendly, public-code direction); branding is via logo + color.
+

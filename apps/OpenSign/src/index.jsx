@@ -1,5 +1,6 @@
 import ReactDOM from "react-dom/client";
 import "./index.css";
+import "./styles/lokation-theme.css";
 import "./styles/dark-theme-improvements.css";
 import App from "./App";
 import { showUpgradeProgress, hideUpgradeProgress } from "./utils";

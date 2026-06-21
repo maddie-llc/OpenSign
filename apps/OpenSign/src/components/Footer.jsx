@@ -56,6 +56,9 @@ const Footer = () => {
               {version ? version : `${Package.version} `})
             </span>
           </p>
+          <p className="agpl-source-offer text-[11px] opacity-70">
+            <a href="https://github.com/maddie-llc/OpenSign" target="_blank" rel="noreferrer" className="hover:underline">Source code (AGPL v3 &sect;13)</a>
+          </p>
         </aside>
       </footer>
       <button

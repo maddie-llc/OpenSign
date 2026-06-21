@@ -48,4 +48,20 @@ else
   echo "    = theme import already present in index.jsx"
 fi
 
+# 7. AGPL v3 section 13 network-use source offer in the served footer.
+#    OpenSign is AGPL-3.0; users interacting over the network must be offered the
+#    corresponding source. The public fork URL satisfies this. Injected here so it
+#    survives upstream upgrades and is re-applied on every overlay run.
+FOOTER="${CLIENT}/src/components/Footer.jsx"
+SOURCE_URL="https://github.com/maddie-llc/OpenSign"
+if [[ -f "${FOOTER}" ]]; then
+  if ! grep -q "agpl-source-offer" "${FOOTER}"; then
+    # Insert a source-offer paragraph immediately before the footer's </aside>.
+    sed -i "s#</aside>#  <p className=\"agpl-source-offer text-[11px] opacity-70\">\n            <a href=\"${SOURCE_URL}\" target=\"_blank\" rel=\"noreferrer\" className=\"hover:underline\">Source code (AGPL v3 \&sect;13)</a>\n          </p>\n        </aside>#" "${FOOTER}"
+    echo "    + added AGPL v3 section 13 source offer to Footer.jsx"
+  else
+    echo "    = AGPL source offer already present in Footer.jsx"
+  fi
+fi
+
 echo "==> Branding overlay applied. Rebuild the client image to publish."

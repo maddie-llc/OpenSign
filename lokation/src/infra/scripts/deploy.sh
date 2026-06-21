@@ -14,6 +14,7 @@ PROJECT_KEY="esign"
 DO_WHATIF="true"
 DB_PROVIDER="${DB_PROVIDER:-atlas}"
 ATLAS_CONNECTION_STRING="${ATLAS_CONNECTION_STRING:-}"
+CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-}"
 SMTP_HOST="${SMTP_HOST:-}"
 SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER_EMAIL="${SMTP_USER_EMAIL:-}"
@@ -126,6 +127,7 @@ COMPUTE_PARAMS=(
   smtpPort="${SMTP_PORT}"
   smtpUserEmail="${SMTP_USER_EMAIL}"
   smtpPass="${SMTP_PASS}"
+  customDomain="${CUSTOM_DOMAIN}"
 )
 
 echo "==> Deploying compute layer (ACA env + server/client/proxy)"
@@ -140,3 +142,14 @@ echo "    Public URL : https://${PROXY_FQDN}"
 echo "    DB         : ${DB_PROVIDER}"
 echo "    Master key : (generated; stored only in the ACA secret)"
 echo "    RG         : ${RG}  (tear down with lokation/src/infra/scripts/teardown.sh --env ${ENVIRONMENT})"
+
+if [[ -n "${CUSTOM_DOMAIN}" ]]; then
+  CNAME_TARGET=$(az deployment group show --resource-group "${RG}" --name "osgn-compute-${ENVIRONMENT}" --query properties.outputs.dnsCnameTarget.value -o tsv)
+  ASUID_HOST=$(az deployment group show --resource-group "${RG}" --name "osgn-compute-${ENVIRONMENT}" --query properties.outputs.dnsAsuidHost.value -o tsv)
+  ASUID_VALUE=$(az deployment group show --resource-group "${RG}" --name "osgn-compute-${ENVIRONMENT}" --query properties.outputs.dnsAsuidValue.value -o tsv)
+  echo ""
+  echo "==> Custom domain: ${CUSTOM_DOMAIN}"
+  echo "    Create these DNS records, then re-run deploy.sh to issue the managed TLS cert:"
+  echo "      CNAME  ${CUSTOM_DOMAIN}  ->  ${CNAME_TARGET}"
+  echo "      TXT    ${ASUID_HOST}  ->  ${ASUID_VALUE}"
+fi

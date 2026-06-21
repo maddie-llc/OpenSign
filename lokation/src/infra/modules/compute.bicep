@@ -70,6 +70,11 @@ param smtpUserEmail string = ''
 @secure()
 param smtpPass string = ''
 
+@description('Custom domain for the public proxy (e.g. esign.lokationre.com). Empty = use the ACA default FQDN only. The CNAME + asuid TXT records must exist before the managed certificate can be issued.')
+param customDomain string = ''
+
+var useCustomDomain bool = !empty(customDomain)
+
 resource storage 'Microsoft.Storage/storageAccounts@2024-01-01' existing = {
   name: storageName
 }
@@ -102,7 +107,7 @@ resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
   }
 }
 
-var hostUrl string = 'https://${names.appProxy}.${env.properties.defaultDomain}'
+var hostUrl string = useCustomDomain ? 'https://${customDomain}' : 'https://${names.appProxy}.${env.properties.defaultDomain}'
 var serverInternalFqdn string = '${names.appServer}.internal.${env.properties.defaultDomain}'
 var clientInternalFqdn string = '${names.appClient}.internal.${env.properties.defaultDomain}'
 
@@ -261,6 +266,19 @@ var caddyfile string = '''
 
 var caddyfileResolved string = replace(replace(caddyfile, 'SERVER_FQDN', serverInternalFqdn), 'CLIENT_FQDN', clientInternalFqdn)
 
+// ACA free managed TLS certificate for the custom domain. Issuance requires the
+// CNAME (-> proxy default FQDN) and asuid TXT (domain-control) records to exist.
+resource managedCert 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (useCustomDomain) {
+  parent: env
+  name: 'cert-${replace(customDomain, '.', '-')}'
+  location: location
+  tags: tags
+  properties: {
+    subjectName: customDomain
+    domainControlValidation: 'CNAME'
+  }
+}
+
 resource proxyApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: names.appProxy
   location: location
@@ -273,6 +291,13 @@ resource proxyApp 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: 80
         transport: 'http'
+        customDomains: useCustomDomain ? [
+          {
+            name: customDomain
+            bindingType: 'SniEnabled'
+            certificateId: managedCert.id
+          }
+        ] : []
         traffic: [
           {
             latestRevision: true
@@ -327,3 +352,8 @@ resource proxyApp 'Microsoft.App/containerApps@2024-03-01' = {
 output proxyFqdn string = proxyApp.properties.configuration.ingress.fqdn
 output serverInternalFqdn string = serverInternalFqdn
 output hostUrl string = hostUrl
+output customDomain string = customDomain
+// DNS records the domain owner must create before custom-domain TLS can be issued.
+output dnsCnameTarget string = useCustomDomain ? proxyApp.properties.configuration.ingress.fqdn : ''
+output dnsAsuidHost string = useCustomDomain ? 'asuid.${customDomain}' : ''
+output dnsAsuidValue string = useCustomDomain ? env.properties.customDomainConfiguration.customDomainVerificationId : ''

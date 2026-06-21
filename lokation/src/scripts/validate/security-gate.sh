@@ -46,9 +46,10 @@ pass "AGPL section 13 source offer present"
 
 # 4. No secret literals committed in infra params.
 echo "-- secret hygiene"
-# A real connection string carries credentials (user:pass@host); the literal
-# "mongodb+srv://..." placeholder in @description comments is allowed.
-if grep -RInE 'mongodb(\+srv)?://[^[:space:]"'\'')]*@' "${INFRA}" --include='*.bicepparam' --include='*.bicep'; then
+# A real connection string carries literal credentials (user:pass@host). Allowed:
+# the "mongodb+srv://..." placeholder in @description comments, and runtime URI
+# construction in scripts that interpolate shell variables (contains ${ } or $).
+if grep -RInE 'mongodb(\+srv)?://[^[:space:]"'\''${}$]*:[^[:space:]"'\''${}$]*@' "${INFRA}" --include='*.bicepparam' --include='*.bicep'; then
   fail "a literal MongoDB connection string with credentials is present in infra source"
 fi
 pass "no literal DB connection strings in infra source"

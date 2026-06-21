@@ -15,6 +15,11 @@ DO_WHATIF="true"
 DB_PROVIDER="${DB_PROVIDER:-atlas}"
 ATLAS_CONNECTION_STRING="${ATLAS_CONNECTION_STRING:-}"
 CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-}"
+# atlas-managed inputs (provision the Atlas cluster as code)
+ATLAS_PUBLIC_KEY="${ATLAS_PUBLIC_KEY:-}"
+ATLAS_PRIVATE_KEY="${ATLAS_PRIVATE_KEY:-}"
+ATLAS_ORG_ID="${ATLAS_ORG_ID:-}"
+ATLAS_DB_PASSWORD="${ATLAS_DB_PASSWORD:-$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 24)Aa1!}"
 SMTP_HOST="${SMTP_HOST:-}"
 SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER_EMAIL="${SMTP_USER_EMAIL:-}"
@@ -53,6 +58,12 @@ if [[ "${DB_PROVIDER}" == "atlas" && -z "${ATLAS_CONNECTION_STRING}" ]]; then
   echo "ERROR: DB_PROVIDER=atlas requires ATLAS_CONNECTION_STRING (mongodb+srv://...)." >&2
   exit 1
 fi
+if [[ "${DB_PROVIDER}" == "atlas-managed" ]]; then
+  if [[ -z "${ATLAS_PUBLIC_KEY}" || -z "${ATLAS_PRIVATE_KEY}" || -z "${ATLAS_ORG_ID}" ]]; then
+    echo "ERROR: DB_PROVIDER=atlas-managed requires ATLAS_PUBLIC_KEY, ATLAS_PRIVATE_KEY, ATLAS_ORG_ID." >&2
+    exit 1
+  fi
+fi
 if [[ "${DB_PROVIDER}" == "cosmos-vcore" ]]; then
   echo "WARNING: cosmos-vcore is NOT compatible with OpenSign (Parse Server boot creates a collation index vCore rejects). Use only for experimentation." >&2
 fi
@@ -71,6 +82,10 @@ DATA_PARAMS=(
   atlasConnectionString="${ATLAS_CONNECTION_STRING}"
   mongoAdminUser="${MONGO_ADMIN_USER}"
   mongoAdminPassword="${MONGO_PWD}"
+  atlasOrgId="${ATLAS_ORG_ID}"
+  atlasPublicKey="${ATLAS_PUBLIC_KEY}"
+  atlasPrivateKey="${ATLAS_PRIVATE_KEY}"
+  atlasDbPassword="${ATLAS_DB_PASSWORD}"
 )
 
 if [[ "${DO_WHATIF}" == "true" ]]; then
@@ -98,6 +113,13 @@ LA_KEY=$(az monitor log-analytics workspace get-shared-keys --resource-group "${
 # Resolve the MongoDB connection URI for the compute layer.
 if [[ "${DB_PROVIDER}" == "atlas" ]]; then
   MONGO_URI="${ATLAS_CONNECTION_STRING}"
+elif [[ "${DB_PROVIDER}" == "atlas-managed" ]]; then
+  # The Atlas deploymentScript (run during the data layer) wrote the connection
+  # string into Key Vault. Read it back for the compute layer.
+  KV_NAME=$(echo "${NAMES}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["keyVault"])')
+  echo "==> Reading Atlas connection string from Key Vault ${KV_NAME}"
+  MONGO_URI=$(az keyvault secret show --vault-name "${KV_NAME}" --name "opensign-mongodb-uri" --query value -o tsv)
+  if [[ -z "${MONGO_URI}" ]]; then echo "ERROR: opensign-mongodb-uri not found in Key Vault (Atlas provisioning may have failed)." >&2; exit 1; fi
 else
   # cosmos-vcore: assemble from the provisioned cluster host (experimentation only).
   MONGO_PWD_ENC=$(P="${MONGO_PWD}" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["P"],safe=""))')

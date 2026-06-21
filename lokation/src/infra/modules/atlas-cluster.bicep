@@ -93,90 +93,111 @@ resource atlasProvision 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     scriptContent: '''
 set -euo pipefail
 BASE="https://cloud.mongodb.com/api/atlas/v2"
-ACCEPT="Accept: application/vnd.atlas.2023-11-15+json"
-CT="Content-Type: application/json"
-AUTH=(--digest -u "${ATLAS_PUB}:${ATLAS_PRIV}")
 
-api() {
-  # api METHOD PATH [JSON_BODY]
-  local method="$1" path="$2" body="${3:-}"
-  if [ -n "${body}" ]; then
-    curl -sS --fail-with-body "${AUTH[@]}" -X "${method}" "${BASE}${path}" -H "${ACCEPT}" -H "${CT}" -d "${body}"
-  else
-    curl -sS --fail-with-body "${AUTH[@]}" -X "${method}" "${BASE}${path}" -H "${ACCEPT}"
-  fi
-}
+# The AzureCLI deploymentScript image does not ship curl/jq, but python3 is
+# always present. Do the Atlas Admin API work (HTTP digest auth) in Python and
+# write the final connection string to a file so it never reaches the logs.
+python3 - <<'PY'
+import json, os, sys, time, urllib.parse, urllib.request
 
-echo "==> Resolve or create project ${PROJECT_NAME} in org ${ATLAS_ORG_ID}"
-if [ -n "${PROJECT_ID}" ]; then
-  GROUP_ID="${PROJECT_ID}"
-  echo "    using pre-linked project ${GROUP_ID}"
-else
-  GROUP_ID="$(api GET "/groups/byName/${PROJECT_NAME}" 2>/dev/null | jq -r '.id // empty' || true)"
-  if [ -z "${GROUP_ID}" ]; then
-    GROUP_ID="$(api POST "/groups" "{\"name\":\"${PROJECT_NAME}\",\"orgId\":\"${ATLAS_ORG_ID}\"}" | jq -r '.id')"
-    echo "    created project ${GROUP_ID}"
-  else
-    echo "    reusing project ${GROUP_ID}"
-  fi
-fi
+BASE = "https://cloud.mongodb.com/api/atlas/v2"
+ACCEPT = "application/vnd.atlas.2023-11-15+json"
+PUB = os.environ["ATLAS_PUB"]; PRIV = os.environ["ATLAS_PRIV"]
 
-echo "==> Ensure network access ${NET_CIDR}"
-api POST "/groups/${GROUP_ID}/accessList" "[{\"cidrBlock\":\"${NET_CIDR}\",\"comment\":\"lokation-esign iac\"}]" >/dev/null 2>&1 || true
+mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+mgr.add_password(None, "https://cloud.mongodb.com", PUB, PRIV)
+opener = urllib.request.build_opener(urllib.request.HTTPDigestAuthHandler(mgr))
 
-echo "==> Ensure database user ${DB_USER}"
-USER_BODY="{\"databaseName\":\"admin\",\"username\":\"${DB_USER}\",\"password\":\"${DB_PASS}\",\"roles\":[{\"databaseName\":\"${DB_NAME}\",\"roleName\":\"readWrite\"}]}"
-if ! api POST "/groups/${GROUP_ID}/databaseUsers" "${USER_BODY}" >/dev/null 2>&1; then
-  api PATCH "/groups/${GROUP_ID}/databaseUsers/admin/${DB_USER}" "{\"password\":\"${DB_PASS}\"}" >/dev/null 2>&1 || true
-fi
+def api(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, method=method)
+    req.add_header("Accept", ACCEPT)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with opener.open(req, timeout=60) as r:
+            raw = r.read().decode()
+            return r.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"raw": raw}
 
-echo "==> Ensure cluster ${CLUSTER_NAME} (${INSTANCE_SIZE} @ ${ATLAS_REGION})"
-if ! api GET "/groups/${GROUP_ID}/clusters/${CLUSTER_NAME}" >/dev/null 2>&1; then
-  CLUSTER_BODY="$(cat <<JSON
-{
-  "name": "${CLUSTER_NAME}",
-  "clusterType": "REPLICASET",
-  "replicationSpecs": [{
-    "regionConfigs": [{
-      "providerName": "AZURE",
-      "regionName": "${ATLAS_REGION}",
-      "priority": 7,
-      "electableSpecs": { "instanceSize": "${INSTANCE_SIZE}", "nodeCount": 3 }
-    }]
-  }]
-}
-JSON
-)"
-  api POST "/groups/${GROUP_ID}/clusters" "${CLUSTER_BODY}" >/dev/null
-  echo "    cluster create requested"
-else
-  echo "    cluster already exists"
-fi
+org = os.environ["ATLAS_ORG_ID"]
+project_id = os.environ.get("PROJECT_ID", "").strip()
+project_name = os.environ["PROJECT_NAME"]
+cluster = os.environ["CLUSTER_NAME"]
+size = os.environ["INSTANCE_SIZE"]; region = os.environ["ATLAS_REGION"]
+db = os.environ["DB_NAME"]; user = os.environ["DB_USER"]; pw = os.environ["DB_PASS"]
+cidr = os.environ["NET_CIDR"]
 
-echo "==> Wait for cluster IDLE"
-SRV=""
-for i in $(seq 1 60); do
-  RESP="$(api GET "/groups/${GROUP_ID}/clusters/${CLUSTER_NAME}")"
-  STATE="$(echo "${RESP}" | jq -r '.stateName // empty')"
-  echo "    [$i] state=${STATE}"
-  if [ "${STATE}" = "IDLE" ]; then
-    SRV="$(echo "${RESP}" | jq -r '.connectionStrings.standardSrv // empty')"
-    break
-  fi
-  sleep 30
-done
-if [ -z "${SRV}" ]; then echo "ERROR: cluster did not reach IDLE / no SRV string"; exit 1; fi
+if project_id:
+    group = project_id
+    print(f"==> using pre-linked project {group}", flush=True)
+else:
+    st, d = api("GET", f"/groups/byName/{project_name}")
+    group = d.get("id") if st == 200 else None
+    if not group:
+        st, d = api("POST", "/groups", {"name": project_name, "orgId": org})
+        group = d["id"]
+        print(f"==> created project {group}", flush=True)
+    else:
+        print(f"==> reusing project {group}", flush=True)
 
-# SRV looks like mongodb+srv://esign-prod.xxxx.mongodb.net ; inject credentials + db + opts.
-HOSTPART="${SRV#mongodb+srv://}"
-ENC_USER="$(printf '%s' "${DB_USER}" | jq -sRr @uri)"
-ENC_PASS="$(printf '%s' "${DB_PASS}" | jq -sRr @uri)"
-URI="mongodb+srv://${ENC_USER}:${ENC_PASS}@${HOSTPART}/${DB_NAME}?retryWrites=true&w=majority&authSource=admin"
+print("==> ensure network access", flush=True)
+api("POST", f"/groups/{group}/accessList", [{"cidrBlock": cidr, "comment": "lokation-esign iac"}])
+
+print("==> ensure database user", flush=True)
+ub = {"databaseName": "admin", "username": user, "password": pw,
+      "roles": [{"databaseName": db, "roleName": "readWrite"}]}
+st, _ = api("POST", f"/groups/{group}/databaseUsers", ub)
+if st >= 400:
+    api("PATCH", f"/groups/{group}/databaseUsers/admin/{user}", {"password": pw})
+
+print(f"==> ensure cluster {cluster} ({size} @ {region})", flush=True)
+st, _ = api("GET", f"/groups/{group}/clusters/{cluster}")
+if st != 200:
+    body = {"name": cluster, "clusterType": "REPLICASET",
+            "replicationSpecs": [{"regionConfigs": [{
+                "providerName": "AZURE", "regionName": region, "priority": 7,
+                "electableSpecs": {"instanceSize": size, "nodeCount": 3}}]}]}
+    st, d = api("POST", f"/groups/{group}/clusters", body)
+    if st >= 400:
+        print("ERROR creating cluster:", json.dumps(d)[:300]); sys.exit(1)
+    print("    cluster create requested", flush=True)
+
+srv = ""
+for i in range(60):
+    st, d = api("GET", f"/groups/{group}/clusters/{cluster}")
+    state = d.get("stateName", "?")
+    print(f"    [{i}] state={state}", flush=True)
+    if state == "IDLE":
+        srv = (d.get("connectionStrings") or {}).get("standardSrv", "")
+        break
+    time.sleep(30)
+if not srv:
+    print("ERROR: cluster did not reach IDLE / no SRV"); sys.exit(1)
+
+host = srv[len("mongodb+srv://"):]
+eu = urllib.parse.quote(user, safe=""); ep = urllib.parse.quote(pw, safe="")
+uri = f"mongodb+srv://{eu}:{ep}@{host}/{db}?retryWrites=true&w=majority&authSource=admin"
+with open("/tmp/atlas_uri", "w") as f:
+    f.write(uri)
+with open("/tmp/atlas_meta", "w") as f:
+    json.dump({"groupId": group, "cluster": cluster}, f)
+print("==> cluster IDLE; connection string written", flush=True)
+PY
+
+URI="$(cat /tmp/atlas_uri)"
+
 
 echo "==> Write connection string to Key Vault ${KV_NAME}/${SECRET_NAME}"
 az keyvault secret set --vault-name "${KV_NAME}" --name "${SECRET_NAME}" --value "${URI}" --output none
 
-echo "{\"groupId\":\"${GROUP_ID}\",\"cluster\":\"${CLUSTER_NAME}\",\"secret\":\"${SECRET_NAME}\"}" > "${AZ_SCRIPTS_OUTPUT_PATH}"
+cat /tmp/atlas_meta > "${AZ_SCRIPTS_OUTPUT_PATH}"
+rm -f /tmp/atlas_uri
 echo "==> Atlas cluster provisioned and connection string stored."
 '''
   }

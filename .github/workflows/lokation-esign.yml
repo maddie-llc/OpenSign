@@ -1,0 +1,58 @@
+# LoKation OpenSign — security gate + production deploy.
+#
+# deploy-prod CANNOT run unless security-gate passes (needs: [security-gate]).
+# Authentication to Azure is via OIDC federated credentials — no long-lived secrets.
+# The production deploy targets the protected `production` GitHub environment.
+name: lokation-esign
+
+on:
+  push:
+    branches: [LoKation]
+    paths:
+      - 'lokation/**'
+      - 'apps/OpenSign/**'
+      - 'apps/OpenSignServer/**'
+      - '.github/workflows/lokation-esign.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to production after the gate passes'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  security-gate:
+    name: Security gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bicep CLI
+        run: az bicep install
+      - name: Run security gate
+        run: bash lokation/src/scripts/validate/security-gate.sh
+
+  deploy-prod:
+    name: Deploy production
+    needs: [security-gate]
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy OpenSign (prod)
+        env:
+          DB_PROVIDER: atlas
+          ATLAS_CONNECTION_STRING: ${{ secrets.ATLAS_CONNECTION_STRING }}
+          CUSTOM_DOMAIN: ${{ vars.ESIGN_CUSTOM_DOMAIN }}
+          OPENSIGN_MASTER_KEY: ${{ secrets.OPENSIGN_MASTER_KEY }}
+        run: bash lokation/src/infra/scripts/deploy.sh --env prod --no-whatif

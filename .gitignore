@@ -32,3 +32,4 @@ apps/OpenSignServer/files/files/*
 lokation/src/infra/**/*.json
 !lokation/src/infra/**/*.bicepparam
 nohup.out
+__pycache__/

@@ -31,3 +31,4 @@ apps/OpenSignServer/files/files/*
 # Bicep build artifacts
 lokation/src/infra/**/*.json
 !lokation/src/infra/**/*.bicepparam
+nohup.out

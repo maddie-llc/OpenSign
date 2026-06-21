@@ -13,8 +13,8 @@ param environment string
 @description('Azure region (verified live-sub convention = eastus).')
 param location string = 'eastus'
 
-@description('MongoDB backend provider. atlas (bring-your-own connection string) | atlas-managed (provision an Atlas cluster as code via the Atlas Admin API) | cosmos-vcore (incompatible with OpenSign).')
-@allowed([ 'atlas', 'atlas-managed', 'cosmos-vcore' ])
+@description('MongoDB backend provider. atlas (recommended/default) vs cosmos-vcore (incompatible with OpenSign). The atlas connection string is supplied externally; for provision-as-code, deploy.sh creates the Atlas cluster first (provision-atlas.py) then passes the string here.')
+@allowed([ 'atlas', 'cosmos-vcore' ])
 param dbProvider string = 'atlas'
 
 @description('MongoDB Atlas connection string (mongodb+srv://...). Required when dbProvider = atlas.')
@@ -46,33 +46,6 @@ param storageSku string = 'Standard_ZRS'
 @description('Storage kind.')
 param storageKind string = 'StorageV2'
 
-// --- atlas-managed provider inputs (Atlas cluster provisioned as code) ---
-@description('Atlas organization id (24-hex). Required when dbProvider = atlas-managed.')
-param atlasOrgId string = ''
-
-@description('Existing Atlas project id (the Azure-Marketplace-linked project) to deploy the cluster into. Empty = create a project by name.')
-param atlasProjectId string = ''
-
-@description('Atlas Admin API public key. Required when dbProvider = atlas-managed.')
-@secure()
-param atlasPublicKey string = ''
-
-@description('Atlas Admin API private key. Required when dbProvider = atlas-managed.')
-@secure()
-param atlasPrivateKey string = ''
-
-@description('Atlas database user password. Required when dbProvider = atlas-managed.')
-@secure()
-param atlasDbPassword string = ''
-
-@description('Atlas cluster tier when dbProvider = atlas-managed (M10 = smallest dedicated).')
-param atlasInstanceSize string = 'M10'
-
-@description('Atlas Azure region key when dbProvider = atlas-managed (eastus2 = US_EAST_2).')
-param atlasRegion string = 'US_EAST_2'
-
-var useAtlasManaged bool = dbProvider == 'atlas-managed'
-
 module naming 'modules/naming.bicep' = {
   params: {
     slug: slug
@@ -103,25 +76,6 @@ module data 'modules/data.bicep' = {
     fileShareQuotaGib: fileShareQuotaGib
     storageSku: storageSku
     storageKind: storageKind
-  }
-}
-
-// Provision a MongoDB Atlas cluster as code and write its connection string into
-// Key Vault. Runs only for dbProvider = atlas-managed. Depends on the data layer
-// (Key Vault + identity + Secrets Officer role assignment).
-module atlas 'modules/atlas-cluster.bicep' = if (useAtlasManaged) {
-  params: {
-    location: location
-    tags: tags.outputs.tags
-    identityId: data.outputs.identityId
-    keyVaultName: data.outputs.keyVaultName
-    atlasOrgId: atlasOrgId
-    atlasProjectId: atlasProjectId
-    atlasPublicKey: atlasPublicKey
-    atlasPrivateKey: atlasPrivateKey
-    dbPassword: atlasDbPassword
-    atlasInstanceSize: atlasInstanceSize
-    atlasRegion: atlasRegion
   }
 }
 

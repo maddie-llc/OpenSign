@@ -9,8 +9,8 @@ param location string
 @description('Standard tag set.')
 param tags object
 
-@description('MongoDB backend provider. atlas (recommended/default) supplies a connection string externally; atlas-managed provisions an Atlas cluster as code (its deploymentScript writes the secret); cosmos-vcore is NOT compatible with OpenSign.')
-@allowed([ 'atlas', 'atlas-managed', 'cosmos-vcore' ])
+@description('MongoDB backend provider. atlas (recommended/default) supplies a connection string externally; cosmos-vcore is NOT compatible with OpenSign and provisions the cluster only for experimentation.')
+@allowed([ 'atlas', 'cosmos-vcore' ])
 param dbProvider string = 'atlas'
 
 @description('MongoDB Atlas connection string (mongodb+srv://...). Stored as a Key Vault secret when dbProvider = atlas.')
@@ -101,19 +101,6 @@ resource kvSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
-  }
-}
-
-// Key Vault Secrets Officer role for the managed identity. Required so the Atlas
-// provisioning deploymentScript (which runs as this identity) can WRITE the
-// connection-string secret. Encompasses the read access the server needs.
-resource kvSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, identity.id, 'kv-secrets-officer')
-  scope: keyVault
-  properties: {
-    principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
   }
 }
 

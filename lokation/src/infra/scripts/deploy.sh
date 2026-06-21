@@ -69,6 +69,26 @@ if [[ "${DB_PROVIDER}" == "cosmos-vcore" ]]; then
   echo "WARNING: cosmos-vcore is NOT compatible with OpenSign (Parse Server boot creates a collation index vCore rejects). Use only for experimentation." >&2
 fi
 
+# atlas-managed: provision the Atlas cluster as code from here (local python), then
+# deploy infra through the plain 'atlas' path with the resolved connection string.
+# This avoids the Azure deploymentScript/ACI lifecycle (no curl in the image; slow,
+# conflict-prone retries). The cluster lifecycle is still fully codified.
+EFFECTIVE_DB_PROVIDER="${DB_PROVIDER}"
+if [[ "${DB_PROVIDER}" == "atlas-managed" ]]; then
+  echo "==> Provisioning MongoDB Atlas cluster as code (Atlas Admin API)"
+  ATLAS_DB_PASSWORD="${ATLAS_DB_PASSWORD}" ATLAS_PUBLIC_KEY="${ATLAS_PUBLIC_KEY}" \
+    ATLAS_PRIVATE_KEY="${ATLAS_PRIVATE_KEY}" ATLAS_ORG_ID="${ATLAS_ORG_ID}" \
+    ATLAS_PROJECT_ID="${ATLAS_PROJECT_ID}" \
+    MONGO_URI_PROVISIONED=$(python3 "${SCRIPT_DIR}/provision-atlas.py")
+  if [[ -z "${MONGO_URI_PROVISIONED:-}" ]]; then
+    echo "ERROR: Atlas provisioning did not return a connection string." >&2
+    exit 1
+  fi
+  ATLAS_CONNECTION_STRING="${MONGO_URI_PROVISIONED}"
+  EFFECTIVE_DB_PROVIDER="atlas"
+  echo "==> Atlas cluster IDLE; connection string resolved."
+fi
+
 echo "==> Environment=${ENVIRONMENT}  RG=${RG}  Location=${LOCATION}  DB=${DB_PROVIDER}"
 
 echo "==> Ensuring resource group"
@@ -79,15 +99,10 @@ DATA_PARAMS=(
   location="${LOCATION}"
   slug="${SLUG}"
   projectKey="${PROJECT_KEY}"
-  dbProvider="${DB_PROVIDER}"
+  dbProvider="${EFFECTIVE_DB_PROVIDER}"
   atlasConnectionString="${ATLAS_CONNECTION_STRING}"
   mongoAdminUser="${MONGO_ADMIN_USER}"
   mongoAdminPassword="${MONGO_PWD}"
-  atlasOrgId="${ATLAS_ORG_ID}"
-  atlasProjectId="${ATLAS_PROJECT_ID}"
-  atlasPublicKey="${ATLAS_PUBLIC_KEY}"
-  atlasPrivateKey="${ATLAS_PRIVATE_KEY}"
-  atlasDbPassword="${ATLAS_DB_PASSWORD}"
 )
 
 if [[ "${DO_WHATIF}" == "true" ]]; then
@@ -113,15 +128,8 @@ echo "==> Fetching Log Analytics shared key"
 LA_KEY=$(az monitor log-analytics workspace get-shared-keys --resource-group "${RG}" --workspace-name "${LOG_NAME}" --query primarySharedKey -o tsv)
 
 # Resolve the MongoDB connection URI for the compute layer.
-if [[ "${DB_PROVIDER}" == "atlas" ]]; then
+if [[ "${EFFECTIVE_DB_PROVIDER}" == "atlas" ]]; then
   MONGO_URI="${ATLAS_CONNECTION_STRING}"
-elif [[ "${DB_PROVIDER}" == "atlas-managed" ]]; then
-  # The Atlas deploymentScript (run during the data layer) wrote the connection
-  # string into Key Vault. Read it back for the compute layer.
-  KV_NAME=$(echo "${NAMES}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["keyVault"])')
-  echo "==> Reading Atlas connection string from Key Vault ${KV_NAME}"
-  MONGO_URI=$(az keyvault secret show --vault-name "${KV_NAME}" --name "opensign-mongodb-uri" --query value -o tsv)
-  if [[ -z "${MONGO_URI}" ]]; then echo "ERROR: opensign-mongodb-uri not found in Key Vault (Atlas provisioning may have failed)." >&2; exit 1; fi
 else
   # cosmos-vcore: assemble from the provisioned cluster host (experimentation only).
   MONGO_PWD_ENC=$(P="${MONGO_PWD}" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["P"],safe=""))')

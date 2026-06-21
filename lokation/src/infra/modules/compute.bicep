@@ -108,8 +108,11 @@ resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
 }
 
 var hostUrl string = useCustomDomain ? 'https://${customDomain}' : 'https://${names.appProxy}.${env.properties.defaultDomain}'
-var serverInternalFqdn string = '${names.appServer}.internal.${env.properties.defaultDomain}'
-var clientInternalFqdn string = '${names.appClient}.internal.${env.properties.defaultDomain}'
+// ACA app-to-app routing within an environment uses the bare app NAME (not the
+// full *.internal.<domain> FQDN, which returns the ACA "Unavailable" page). Caddy
+// reaches the server/client over plain http on the app name (ingress port 80).
+var serverInternalFqdn string = names.appServer
+var clientInternalFqdn string = names.appClient
 
 var smtpEnabled bool = !empty(smtpHost)
 

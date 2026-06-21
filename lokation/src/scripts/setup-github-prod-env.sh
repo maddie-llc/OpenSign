@@ -22,12 +22,18 @@ REVIEWER_LOGIN="${REVIEWER_LOGIN:-$(gh api user --jq '.login')}"
 REVIEWER_ID=$(gh api "users/${REVIEWER_LOGIN}" --jq '.id')
 echo "==> Configuring ${REPO} environment 'production' (reviewer: ${REVIEWER_LOGIN} / ${REVIEWER_ID})"
 
-gh api -X PUT "repos/${REPO}/environments/production" \
-  -f wait_timer=0 \
-  -F "reviewers[][type]=User" \
-  -F "reviewers[][id]=${REVIEWER_ID}" \
-  -F "deployment_branch_policy[protected_branches]=false" \
-  -F "deployment_branch_policy[custom_branch_policies]=true" \
+# Build a typed JSON body (wait_timer must be an integer; reviewers is an array of objects).
+PAYLOAD=$(cat <<JSON
+{
+  "wait_timer": 0,
+  "reviewers": [ { "type": "User", "id": ${REVIEWER_ID} } ],
+  "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true }
+}
+JSON
+)
+
+echo "${PAYLOAD}" | gh api -X PUT "repos/${REPO}/environments/production" \
+  --input - \
   --jq '"    env: " + .name + " (" + (.protection_rules|length|tostring) + " protection rules)"'
 
 # Restrict deployments to the LoKation branch (idempotent).

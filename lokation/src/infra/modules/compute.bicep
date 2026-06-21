@@ -254,13 +254,15 @@ resource clientApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 // Caddy reverse proxy: routes /api/* to the server and everything else to the client.
 // The Caddyfile is injected as a mounted secret so no custom image build is required.
+// NOTE: ACA internal ingress always listens on port 80 (the container targetPort is
+// internal to ACA), so Caddy must reach the internal FQDNs WITHOUT a port suffix.
 var caddyfile string = '''
 :80 {
   encode gzip
   handle_path /api/* {
-    reverse_proxy http://SERVER_FQDN:8080
+    reverse_proxy http://SERVER_FQDN
   }
-  reverse_proxy http://CLIENT_FQDN:3000
+  reverse_proxy http://CLIENT_FQDN
 }
 '''
 

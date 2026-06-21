@@ -29,5 +29,5 @@ apps/OpenSignServer/files/files/*
 # Local planning/tracking artifacts (contain sensitive infra + business details; never publish)
 .copilot-tracking/
 # Bicep build artifacts
-infra/**/*.json
-!infra/**/*.bicepparam
+lokation/src/infra/**/*.json
+!lokation/src/infra/**/*.bicepparam

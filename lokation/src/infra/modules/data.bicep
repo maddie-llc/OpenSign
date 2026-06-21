@@ -1,4 +1,4 @@
-metadata description = 'OpenSign data layer: Log Analytics, App Insights, managed identity, Key Vault, storage + Azure Files share, and Cosmos DB for MongoDB vCore. Resource-group scoped.'
+metadata description = 'OpenSign data layer: Log Analytics, App Insights, managed identity, Key Vault, storage + Azure Files share. The MongoDB backend is MongoDB Atlas by default (its connection string is supplied externally and stored in Key Vault); Cosmos DB for MongoDB vCore is an opt-in alternative but is known INCOMPATIBLE with OpenSign (Parse Server boot creates a collation index vCore rejects). Resource-group scoped.'
 
 @description('Resource names from the naming module.')
 param names object
@@ -9,24 +9,32 @@ param location string
 @description('Standard tag set.')
 param tags object
 
-@description('Mongo admin username.')
-param mongoAdminUser string
+@description('MongoDB backend provider. atlas (recommended/default) supplies a connection string externally; cosmos-vcore is NOT compatible with OpenSign and provisions the cluster only for experimentation.')
+@allowed([ 'atlas', 'cosmos-vcore' ])
+param dbProvider string = 'atlas'
 
-@description('Mongo admin password.')
+@description('MongoDB Atlas connection string (mongodb+srv://...). Stored as a Key Vault secret when dbProvider = atlas.')
 @secure()
-param mongoAdminPassword string
+param atlasConnectionString string = ''
+
+@description('Cosmos vCore admin username (only used when dbProvider = cosmos-vcore).')
+param mongoAdminUser string = 'osgnadmin'
+
+@description('Cosmos vCore admin password (only used when dbProvider = cosmos-vcore).')
+@secure()
+param mongoAdminPassword string = ''
 
 @description('Cosmos vCore compute tier (Free | M25 | M30 ...).')
-param mongoTier string
+param mongoTier string = 'Free'
 
 @description('Mongo server version.')
 param mongoServerVersion string = '7.0'
 
 @description('Mongo storage GiB.')
-param mongoStorageGib int
+param mongoStorageGib int = 32
 
 @description('High availability mode.')
-param mongoHaEnabled bool
+param mongoHaEnabled bool = false
 
 @description('Azure Files share quota GiB.')
 param fileShareQuotaGib int
@@ -36,6 +44,8 @@ param storageSku string
 
 @description('Storage kind, StorageV2 or FileStorage.')
 param storageKind string
+
+var useCosmosVcore bool = dbProvider == 'cosmos-vcore'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: names.logAnalytics
@@ -123,7 +133,20 @@ resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2024-0
   }
 }
 
-resource mongo 'Microsoft.DocumentDB/mongoClusters@2024-07-01' = {
+// Store the database connection in Key Vault.
+// - atlas: store the supplied Atlas connection string.
+// - cosmos-vcore: deploy.sh assembles + sets it (kept out of template to avoid listing the vCore key here).
+resource mongoSecret 'Microsoft.KeyVault/vaults/secrets@2024-11-01' = if (dbProvider == 'atlas' && !empty(atlasConnectionString)) {
+  parent: keyVault
+  name: 'opensign-mongodb-uri'
+  properties: {
+    value: atlasConnectionString
+  }
+}
+
+// Cosmos DB for MongoDB vCore — OPT-IN ONLY and known incompatible with OpenSign.
+// Provisioned solely when dbProvider = cosmos-vcore (experimentation/spike).
+resource mongo 'Microsoft.DocumentDB/mongoClusters@2024-07-01' = if (useCosmosVcore) {
   name: names.mongo
   location: location
   tags: tags
@@ -150,7 +173,7 @@ resource mongo 'Microsoft.DocumentDB/mongoClusters@2024-07-01' = {
 }
 
 // Rehearsal firewall rule: allow all (throwaway environment, torn down after validation).
-resource mongoFirewallAll 'Microsoft.DocumentDB/mongoClusters/firewallRules@2024-07-01' = {
+resource mongoFirewallAll 'Microsoft.DocumentDB/mongoClusters/firewallRules@2024-07-01' = if (useCosmosVcore) {
   parent: mongo
   name: 'allow-all-rehearsal'
   properties: {
@@ -167,5 +190,6 @@ output identityClientId string = identity.properties.clientId
 output keyVaultName string = keyVault.name
 output storageName string = storage.name
 output fileShareName string = fileShare.name
-output mongoName string = mongo.name
-output mongoHost string = '${mongo.name}.global.mongocluster.cosmos.azure.com'
+output dbProvider string = dbProvider
+output mongoName string = useCosmosVcore ? names.mongo : ''
+output mongoHost string = useCosmosVcore ? '${names.mongo}.global.mongocluster.cosmos.azure.com' : ''

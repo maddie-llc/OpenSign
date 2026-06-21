@@ -13,12 +13,20 @@ param environment string
 @description('Azure region (verified live-sub convention = eastus).')
 param location string = 'eastus'
 
-@description('Mongo admin username.')
-param mongoAdminUser string
+@description('MongoDB backend provider. atlas (recommended/default) vs cosmos-vcore (incompatible with OpenSign).')
+@allowed([ 'atlas', 'cosmos-vcore' ])
+param dbProvider string = 'atlas'
 
-@description('Mongo admin password.')
+@description('MongoDB Atlas connection string (mongodb+srv://...). Required when dbProvider = atlas.')
 @secure()
-param mongoAdminPassword string
+param atlasConnectionString string = ''
+
+@description('Cosmos vCore admin username (only used when dbProvider = cosmos-vcore).')
+param mongoAdminUser string = 'osgnadmin'
+
+@description('Cosmos vCore admin password (only used when dbProvider = cosmos-vcore).')
+@secure()
+param mongoAdminPassword string = ''
 
 @description('Cosmos vCore compute tier.')
 param mongoTier string = 'Free'
@@ -58,6 +66,8 @@ module data 'modules/data.bicep' = {
     names: naming.outputs.names
     location: location
     tags: tags.outputs.tags
+    dbProvider: dbProvider
+    atlasConnectionString: atlasConnectionString
     mongoAdminUser: mongoAdminUser
     mongoAdminPassword: mongoAdminPassword
     mongoTier: mongoTier

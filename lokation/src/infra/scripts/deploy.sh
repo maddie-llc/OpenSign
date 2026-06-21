@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy the OpenSign self-host to Azure (staged: data layer -> resolve secrets -> compute layer).
-# Rehearsal-aware: generates throwaway secrets, tests Cosmos vCore, and is fully torn down by teardown.sh.
+# Default DB provider is MongoDB Atlas (Cosmos vCore is proven INCOMPATIBLE with OpenSign).
+# Rehearsal-aware: generates throwaway secrets and is fully torn down by teardown.sh.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +12,12 @@ LOCATION="eastus"
 SLUG="loka"
 PROJECT_KEY="esign"
 DO_WHATIF="true"
+DB_PROVIDER="${DB_PROVIDER:-atlas}"
+ATLAS_CONNECTION_STRING="${ATLAS_CONNECTION_STRING:-}"
 SMTP_HOST="${SMTP_HOST:-}"
+SMTP_PORT="${SMTP_PORT:-587}"
+SMTP_USER_EMAIL="${SMTP_USER_EMAIL:-}"
+SMTP_PASS="${SMTP_PASS:-}"
 SMTP_PORT="${SMTP_PORT:-587}"
 SMTP_USER_EMAIL="${SMTP_USER_EMAIL:-}"
 SMTP_PASS="${SMTP_PASS:-}"
@@ -19,8 +25,10 @@ SMTP_PASS="${SMTP_PASS:-}"
 usage() {
   cat <<USAGE
 Usage: deploy.sh --env <dev|prod> [--location eastus] [--no-whatif]
-Secrets (master key, mongo password) are generated if not supplied via env:
-  OPENSIGN_MASTER_KEY, MONGO_ADMIN_PASSWORD
+Database provider (env DB_PROVIDER, default atlas):
+  atlas        -> supply ATLAS_CONNECTION_STRING (mongodb+srv://...). RECOMMENDED.
+  cosmos-vcore -> provisions Cosmos vCore (NOT compatible with OpenSign; experimentation only).
+Secrets generated if not supplied via env: OPENSIGN_MASTER_KEY, MONGO_ADMIN_PASSWORD
 Optional SMTP for OTP testing: SMTP_HOST, SMTP_PORT, SMTP_USER_EMAIL, SMTP_PASS
 USAGE
 }
@@ -40,7 +48,15 @@ MONGO_ADMIN_USER="osgnadmin"
 MASTER_KEY="${OPENSIGN_MASTER_KEY:-$(openssl rand -hex 16)}"
 MONGO_PWD="${MONGO_ADMIN_PASSWORD:-$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 24)Aa1!}"
 
-echo "==> Environment=${ENVIRONMENT}  RG=${RG}  Location=${LOCATION}"
+if [[ "${DB_PROVIDER}" == "atlas" && -z "${ATLAS_CONNECTION_STRING}" ]]; then
+  echo "ERROR: DB_PROVIDER=atlas requires ATLAS_CONNECTION_STRING (mongodb+srv://...)." >&2
+  exit 1
+fi
+if [[ "${DB_PROVIDER}" == "cosmos-vcore" ]]; then
+  echo "WARNING: cosmos-vcore is NOT compatible with OpenSign (Parse Server boot creates a collation index vCore rejects). Use only for experimentation." >&2
+fi
+
+echo "==> Environment=${ENVIRONMENT}  RG=${RG}  Location=${LOCATION}  DB=${DB_PROVIDER}"
 
 echo "==> Ensuring resource group"
 az group create --name "${RG}" --location "${LOCATION}" --tags project=esign solution=opensign environment="${ENVIRONMENT}" managedBy=bicep --output none
@@ -50,6 +66,8 @@ DATA_PARAMS=(
   location="${LOCATION}"
   slug="${SLUG}"
   projectKey="${PROJECT_KEY}"
+  dbProvider="${DB_PROVIDER}"
+  atlasConnectionString="${ATLAS_CONNECTION_STRING}"
   mongoAdminUser="${MONGO_ADMIN_USER}"
   mongoAdminPassword="${MONGO_PWD}"
 )
@@ -59,7 +77,7 @@ if [[ "${DO_WHATIF}" == "true" ]]; then
   az deployment group what-if --resource-group "${RG}" --template-file "${INFRA_DIR}/main.bicep" --parameters "${DATA_PARAMS[@]}" || true
 fi
 
-echo "==> Deploying data layer (Mongo vCore can take ~10-15 min)"
+echo "==> Deploying data layer"
 az deployment group create --resource-group "${RG}" --name "osgn-data-${ENVIRONMENT}" \
   --template-file "${INFRA_DIR}/main.bicep" --parameters "${DATA_PARAMS[@]}" --output none
 
@@ -76,9 +94,14 @@ LOG_NAME=$(echo "${NAMES}" | python3 -c 'import sys,json;print(json.load(sys.std
 echo "==> Fetching Log Analytics shared key"
 LA_KEY=$(az monitor log-analytics workspace get-shared-keys --resource-group "${RG}" --workspace-name "${LOG_NAME}" --query primarySharedKey -o tsv)
 
-# URL-encode the mongo password for the connection URI.
-MONGO_PWD_ENC=$(P="${MONGO_PWD}" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["P"],safe=""))')
-MONGO_URI="mongodb+srv://${MONGO_ADMIN_USER}:${MONGO_PWD_ENC}@${MONGO_HOST}/opensign?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+# Resolve the MongoDB connection URI for the compute layer.
+if [[ "${DB_PROVIDER}" == "atlas" ]]; then
+  MONGO_URI="${ATLAS_CONNECTION_STRING}"
+else
+  # cosmos-vcore: assemble from the provisioned cluster host (experimentation only).
+  MONGO_PWD_ENC=$(P="${MONGO_PWD}" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["P"],safe=""))')
+  MONGO_URI="mongodb+srv://${MONGO_ADMIN_USER}:${MONGO_PWD_ENC}@${MONGO_HOST}/opensign?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+fi
 
 COMPUTE_PARAMS=(
   names="${NAMES}"
@@ -114,5 +137,6 @@ PROXY_FQDN=$(az deployment group show --resource-group "${RG}" --name "osgn-comp
 echo ""
 echo "==> Deployed."
 echo "    Public URL : https://${PROXY_FQDN}"
+echo "    DB         : ${DB_PROVIDER}"
 echo "    Master key : (generated; stored only in the ACA secret)"
-echo "    RG         : ${RG}  (tear down with infra/scripts/teardown.sh --env ${ENVIRONMENT})"
+echo "    RG         : ${RG}  (tear down with lokation/src/infra/scripts/teardown.sh --env ${ENVIRONMENT})"

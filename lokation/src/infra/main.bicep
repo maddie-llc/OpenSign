@@ -50,6 +50,9 @@ param storageKind string = 'StorageV2'
 @description('Atlas organization id (24-hex). Required when dbProvider = atlas-managed.')
 param atlasOrgId string = ''
 
+@description('Existing Atlas project id (the Azure-Marketplace-linked project) to deploy the cluster into. Empty = create a project by name.')
+param atlasProjectId string = ''
+
 @description('Atlas Admin API public key. Required when dbProvider = atlas-managed.')
 @secure()
 param atlasPublicKey string = ''
@@ -113,6 +116,7 @@ module atlas 'modules/atlas-cluster.bicep' = if (useAtlasManaged) {
     identityId: data.outputs.identityId
     keyVaultName: data.outputs.keyVaultName
     atlasOrgId: atlasOrgId
+    atlasProjectId: atlasProjectId
     atlasPublicKey: atlasPublicKey
     atlasPrivateKey: atlasPrivateKey
     dbPassword: atlasDbPassword

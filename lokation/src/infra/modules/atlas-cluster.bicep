@@ -18,7 +18,10 @@ param secretName string = 'opensign-mongodb-uri'
 @description('Atlas organization id (24-hex).')
 param atlasOrgId string
 
-@description('Atlas project name (created if absent).')
+@description('Existing Atlas project id (24-hex) to deploy the cluster into. When set (e.g. the Azure-Marketplace-linked project), the script uses it directly and does NOT create a new project, preserving the Azure billing link. Empty = resolve/create a project by name.')
+param atlasProjectId string = ''
+
+@description('Atlas project name (created if absent and atlasProjectId is empty).')
 param atlasProjectName string = 'lokation-esign'
 
 @description('Atlas cluster name.')
@@ -75,6 +78,7 @@ resource atlasProvision 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       { name: 'ATLAS_PUB', secureValue: atlasPublicKey }
       { name: 'ATLAS_PRIV', secureValue: atlasPrivateKey }
       { name: 'ATLAS_ORG_ID', value: atlasOrgId }
+      { name: 'PROJECT_ID', value: atlasProjectId }
       { name: 'PROJECT_NAME', value: atlasProjectName }
       { name: 'CLUSTER_NAME', value: atlasClusterName }
       { name: 'INSTANCE_SIZE', value: atlasInstanceSize }
@@ -104,12 +108,17 @@ api() {
 }
 
 echo "==> Resolve or create project ${PROJECT_NAME} in org ${ATLAS_ORG_ID}"
-GROUP_ID="$(api GET "/groups/byName/${PROJECT_NAME}" 2>/dev/null | jq -r '.id // empty' || true)"
-if [ -z "${GROUP_ID}" ]; then
-  GROUP_ID="$(api POST "/groups" "{\"name\":\"${PROJECT_NAME}\",\"orgId\":\"${ATLAS_ORG_ID}\"}" | jq -r '.id')"
-  echo "    created project ${GROUP_ID}"
+if [ -n "${PROJECT_ID}" ]; then
+  GROUP_ID="${PROJECT_ID}"
+  echo "    using pre-linked project ${GROUP_ID}"
 else
-  echo "    reusing project ${GROUP_ID}"
+  GROUP_ID="$(api GET "/groups/byName/${PROJECT_NAME}" 2>/dev/null | jq -r '.id // empty' || true)"
+  if [ -z "${GROUP_ID}" ]; then
+    GROUP_ID="$(api POST "/groups" "{\"name\":\"${PROJECT_NAME}\",\"orgId\":\"${ATLAS_ORG_ID}\"}" | jq -r '.id')"
+    echo "    created project ${GROUP_ID}"
+  else
+    echo "    reusing project ${GROUP_ID}"
+  fi
 fi
 
 echo "==> Ensure network access ${NET_CIDR}"

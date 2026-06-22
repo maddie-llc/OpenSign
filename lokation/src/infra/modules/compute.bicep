@@ -70,7 +70,7 @@ param smtpUserEmail string = ''
 @secure()
 param smtpPass string = ''
 
-@description('Custom domain for the public proxy (e.g. esign.lokationre.com). Empty = use the ACA default FQDN only. The CNAME + asuid TXT records must exist before the managed certificate can be issued.')
+@description('Custom domain for the public proxy (e.g. esign.lokationagent.com). Empty = use the ACA default FQDN only. The CNAME + asuid TXT records must exist before the managed certificate can be issued.')
 param customDomain string = ''
 
 var useCustomDomain bool = !empty(customDomain)
